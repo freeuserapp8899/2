@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Book 1 - TOTP</title>
+<style>
+body { font-family: monospace; padding: 30px; background: #f5f5f5; text-align: center; }
+.book { background: white; padding: 20px; margin: 12px auto; max-width: 600px; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.04); }
+h2 { margin: 6px 0 12px 0; font-size: 1.2rem; }
+.secretRow { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+input { font-size: 1rem; padding: 8px; width: 250px; }
+.codeContainer { font-size: 3rem; letter-spacing: 8px; display: inline-flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.code { user-select: all; min-width: 160px; text-align: center; }
+.copyBtn { font-size: 0.8rem; padding: 6px 10px; cursor: pointer; border: 1px solid #999; border-radius: 4px; background: #eee; }
+.copyBtn:hover { background: #ddd; }
+.timer { font-size: 0.95rem; color: #666; margin-top: 6px; }
+.copiedMessage { font-size: 0.85rem; color: green; margin-left: 8px; opacity: 0; transition: opacity 0.25s ease; display: inline-block; }
+.copiedMessage.visible { opacity: 1; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="book" id="auth">
+  <h2>Enter 4-digit password</h2>
+  <input id="passwordInput" type="password" maxlength="4" placeholder="4-digit password" />
+  <div style="margin-top:10px">
+    <button onclick="checkPassword()">Unlock</button>
+  </div>
+</div>
+
+<div id="mainContent" class="hidden">
+  <div class="book">
+    <h2>freeuserapp8899@gmail.com</h2>
+    <div class="secretRow">
+      <div>
+        <label>Gmail</label><br>
+        <input id="secret1" readonly>
+        <div class="codeContainer">
+          <div id="code1" class="code"></div>
+          <button class="copyBtn" data-copy-for="code1">Copy</button>
+          <span class="copiedMessage" id="copied1">Copied!</span>
+        </div>
+        <div id="timer1" class="timer"></div>
+      </div>
+      <div>
+        <label>Facebook</label><br>
+        <input id="secret2" readonly>
+        <div class="codeContainer">
+          <div id="code2" class="code"></div>
+          <button class="copyBtn" data-copy-for="code2">Copy</button>
+          <span class="copiedMessage" id="copied2">Copied!</span>
+        </div>
+        <div id="timer2" class="timer"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const correctPassword = "1234";
+function checkPassword(){
+  const val = document.getElementById("passwordInput").value;
+  if(val===correctPassword){
+    document.getElementById("auth").classList.add("hidden");
+    document.getElementById("mainContent").classList.remove("hidden");
+    initializeTOTP();
+  } else { alert("Incorrect password"); }
+}
+
+function base32tohex(base32){
+  const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"; let bits="", hex="";
+  base32=(base32||"").toUpperCase().replace(/=+$/,"").replace(/ /g,"");
+  for(let i=0;i<base32.length;i++){ const val=chars.indexOf(base32.charAt(i)); if(val===-1) return null; bits+=val.toString(2).padStart(5,'0'); }
+  for(let i=0;i+4<=bits.length;i+=4){ hex+=parseInt(bits.substr(i,4),2).toString(16); }
+  return hex;
+}
+function hexToBytes(hex){ const bytes=[]; for(let i=0;i<hex.length;i+=2) bytes.push(parseInt(hex.substr(i,2),16)); return bytes; }
+async function hmacSha1(keyBytes,msgBytes){
+  const key=await crypto.subtle.importKey("raw",new Uint8Array(keyBytes),{name:"HMAC",hash:"SHA-1"},false,["sign"]);
+  const sig=await crypto.subtle.sign("HMAC",key,new Uint8Array(msgBytes));
+  return new Uint8Array(sig);
+}
+async function computeTOTP(secret){
+  const hex=base32tohex(secret); if(!hex) return null;
+  const keyBytes=hexToBytes(hex);
+  const epoch=Math.floor(Date.now()/1000);
+  const step=Math.floor(epoch/30);
+  const remaining=30-(epoch%30);
+  const timeBytes=Array(8).fill(0); let val=step; for(let i=7;i>=0;i--){ timeBytes[i]=val&0xff; val>>=8; }
+  const hash=await hmacSha1(keyBytes,timeBytes);
+  const offset=hash[hash.length-1]&0xf;
+  const binary=((hash[offset]&0x7f)<<24)|((hash[offset+1]&0xff)<<16)|((hash[offset+2]&0xff)<<8)|(hash[offset+3]&0xff);
+  const otp=(binary%1000000).toString().padStart(6,"0");
+  return {otp, remaining};
+}
+
+function initializeTOTP(){
+  document.getElementById("secret1").value="ms64 cmjr snpr xerm 5hwg ippl m4gg kmyj";
+  document.getElementById("secret2").value="YNRA WNER YDVV PO5L NLX7 MUVK QBB5 YDWZ";
+
+  async function updateAll(){
+    const r1=await computeTOTP(document.getElementById("secret1").value);
+    const r2=await computeTOTP(document.getElementById("secret2").value);
+    if(r1){ document.getElementById("code1").textContent=r1.otp; document.getElementById("timer1").textContent=`Expires in ${r1.remaining} seconds`; }
+    if(r2){ document.getElementById("code2").textContent=r2.otp; document.getElementById("timer2").textContent=`Expires in ${r2.remaining} seconds`; }
+    document.querySelectorAll(".copiedMessage").forEach(m=>m.classList.remove("visible"));
+  }
+
+  document.addEventListener("click", async e=>{
+    if(!e.target.classList.contains("copyBtn")) return;
+    const id=e.target.dataset.copyFor;
+    const text=document.getElementById(id)?.textContent;
+    if(!text) return;
+    try{ await navigator.clipboard.writeText(text); showCopied(id); }catch{ fallbackCopy(text,id); }
+  });
+
+  function showCopied(id){ const el=document.getElementById("copied"+id.slice(-1)); if(el){ el.classList.add("visible"); setTimeout(()=>el.classList.remove("visible"),1500); } }
+  function fallbackCopy(text,id){ const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.left="-9999px"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); showCopied(id); }
+
+  updateAll(); setInterval(updateAll,1000);
+}
+</script>
+</body>
+</html>
